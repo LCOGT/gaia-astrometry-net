@@ -11,7 +11,6 @@ import multiprocessing as mp
 from lcogt_logging import LCOGTFormatter
 import datetime
 import sys
-sys.path.append('/opt/astrometry.net/lib/python/')
 from astrometry.util.util import *
 
 Base = declarative_base()
@@ -26,8 +25,8 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 
-def run(catalog_directory='/home/cmccully/gaia_20180201/raw/',
-        n_sources_for_all_sky=100000):
+def create_index_files(catalog_directory='/home/cmccully/gaia_20180201/raw/',
+                       n_sources_for_all_sky=100000):
     """
     Make the gaia astrometry.net index files
     :param catalog_directory: directory with the catalog files
@@ -42,7 +41,6 @@ def run(catalog_directory='/home/cmccully/gaia_20180201/raw/',
     munged_catalogs = glob('gaia-fullcatalog*.fits')
     if len(munged_catalogs) != 53:
         munged_catalogs = munge_initial_small_catalogs(initial_catalogs)
-
 
     healpixels = nside_to_healpixels(8)
     healpix_catalogs = make_gaia_healpix_catalogs(healpixels, munged_catalogs, ncpu=6)
