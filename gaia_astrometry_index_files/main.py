@@ -188,7 +188,7 @@ def make_gaia_healpix_catalogs(healpixels, db_address='sqlite:////gaia.db'):
 
 
 def parse_catalog(filename):
-    with gzip.open(filename, 'r') as csv_file:
+    with gzip.open(filename, 'rt') as csv_file:
         csv_data = csv_file.read()
     catalog_data = ascii.read(csv_data, 'fast_csv')
     return catalog_data
