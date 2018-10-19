@@ -1,9 +1,8 @@
-import numpy as np
 from glob import glob
 from astropy.io import fits
 from sqlalchemy import create_engine, pool
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy import Column, Integer, Float, Index
+from sqlalchemy import Column, Integer, Float
 from sqlalchemy.ext.declarative import declarative_base
 import os
 import logging
@@ -11,6 +10,8 @@ import multiprocessing as mp
 from lcogt_logging import LCOGTFormatter
 import datetime
 import sys
+import gzip
+from astropy.io import ascii
 from astrometry.util.util import *
 
 Base = declarative_base()
@@ -25,8 +26,7 @@ handler.setFormatter(formatter)
 logger.addHandler(handler)
 
 
-def create_index_files(catalog_directory='/home/cmccully/gaia_20180201/raw/',
-                       n_sources_for_all_sky=100000):
+def create_index_files(catalog_directory='/net/fsfs.lco.gtn/data/AstroCatalogs/GAIA-DR2/gaia_source/csv'):
     """
     Make the gaia astrometry.net index files
     :param catalog_directory: directory with the catalog files
@@ -34,26 +34,15 @@ def create_index_files(catalog_directory='/home/cmccully/gaia_20180201/raw/',
                                   individual catalog to put in the all sky catalog
     :return:
     """
-    # First let's make the data a little more useable by putting the catalog into fewer,
-    # bigger files
-    initial_catalogs = glob(os.path.join(catalog_directory, 'GaiaSource*.fits'))
-    # Check to see if the munged catalogs already exist
-    munged_catalogs = glob('gaia-fullcatalog*.fits')
-    if len(munged_catalogs) != 53:
-        munged_catalogs = munge_initial_small_catalogs(initial_catalogs)
+    # First let's make the data a little more useable by putting the catalog into an sqlite db.
+    initial_catalogs = glob(os.path.join(catalog_directory, '*.csv.gz'))
 
-    healpixels = nside_to_healpixels(8)
-    healpix_catalogs = make_gaia_healpix_catalogs(healpixels, munged_catalogs, ncpu=6)
+    if os.path.getsize('gaia.db') < 1e6:
+        # Now we can make a database of catalog. This is going to be one heck of a db.
+        make_gaia_db('sqlite:///gaia.db', initial_catalogs)
 
-    if not os.path.exists('gaia-catalog-allsky.fits'):
-        all_sky_catalog = make_all_sky_catalog(healpix_catalogs, n_sources_for_all_sky)
-    else:
-        all_sky_catalog = 'gaia-catalog-allsky.fits'
-
-    # Start from the large scales and make the index files from the all sky catalog
-    index_scales = np.arange(7, 20)[::-1]
-    for scale in index_scales:
-        make_all_sky_index_files(all_sky_catalog, scale)
+    healpixels = nside_to_healpixels(16)
+    healpix_catalogs = make_gaia_healpix_catalogs(healpixels, db_address='sqlite:///gaia.db', ncpu=6)
 
     # Now we need to make index files down to scale=0
     # This is currently what is provided by the astrometry.net people and is
@@ -62,53 +51,11 @@ def create_index_files(catalog_directory='/home/cmccully/gaia_20180201/raw/',
     for scale in index_scales:
         make_individual_index_files(healpix_catalogs, scale, ncpu=6)
 
-    if not os.path.exists('gaia.db'):
-        # Now we can make a database of catalog. This is going to be one heck of a db.
-        make_gaia_db('sqlite:///gaia.db', munged_catalogs)
-
-
     index_scales = np.arange(-3, 0)[::-1]
     for scale in index_scales:
         make_individual_index_files(healpix_catalogs, scale, ncpu=6)
 
     # New index files! Woot!
-
-
-
-def munge_initial_small_catalogs(initial_catalogs):
-    output_catalogs = []
-    first_catalog = parse_catalog(initial_catalogs[0])
-    counter = 0
-    useful_columns = ['ra', 'ra_error', 'dec', 'dec_error',
-                      'phot_g_mean_flux', 'phot_g_mean_flux_error']
-    munged_data = np.zeros(100 * len(first_catalog), dtype=first_catalog.dtype)
-    munged_data = munged_data[useful_columns]
-    sources_per_catalog = len(first_catalog)
-    file_counter = 0
-    # Go through each of the catalog files
-    for catalog in initial_catalogs[:-1]:
-        logger.info('Munging data from {filename}'.format(filename=catalog))
-        # Save the ra, dec, flux, and corresponding errors in batches of 100
-        catalog_data = parse_catalog(catalog)
-        munged_catalog_location = slice(counter * sources_per_catalog,
-                                        (counter + 1) * sources_per_catalog)
-        for column in useful_columns:
-            munged_data[column][munged_catalog_location] = catalog_data[column]
-        counter += 1
-        if counter == 100:
-            output_catalogs.append(save_catalog(munged_data, file_counter))
-            counter = 0
-            file_counter += 1
-
-    # Write out the last file
-    last_catalog = parse_catalog(initial_catalogs[-1])
-    munged_catalog_location = slice(counter * sources_per_catalog,
-                                    counter * sources_per_catalog + len(last_catalog))
-    for column in useful_columns:
-        munged_data[column][munged_catalog_location] = last_catalog[column]
-    munged_data = munged_data[:counter * sources_per_catalog + len(last_catalog)]
-    output_catalogs.append(save_catalog(munged_data, file_counter))
-    return output_catalogs
 
 
 def save_catalog(catalog, counter):
@@ -144,6 +91,15 @@ class Star(Base):
     g_flux_error = Column(Float)
 
 
+class Position(Base):
+    __tablename__ = 'positions'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ramin = Column(Float)
+    ramax = Column(Float)
+    decmin = Column(Float)
+    decmax = Column(Float)
+
+
 def great_circle_distance(ra1, dec1, ra2, dec2):
     ra1_rad, dec1_rad = np.deg2rad([ra1, dec1])
     ra2_rad, dec2_rad = np.deg2rad([ra2, dec2])
@@ -174,7 +130,6 @@ def get_session(db_address):
     # incomplete records causing a crash. None of the queries here are large, so it should be ok.
     db_session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
     session = db_session()
-
     return session
 
 
@@ -188,9 +143,14 @@ def create_db(db_address):
 
 
 def make_gaia_db(db_address, catalogs):
-    create_db(db_address)
+    """CREATE TABLE sources (id INTEGER NOT NULL, ra FLOAT, dec FLOAT, ra_error FLOAT, dec_error FLOAT,
+    g_flux FLOAT, g_flux_error FLOAT, PRIMARY KEY (id));
+    CREATE VIRTUAL TABLE positions using rtree(id, ramin, ramax, decmin, decmax);
+    """
+    #create_db(db_address)
     session = get_session(db_address)
     for catalog_file in catalogs:
+
         logger.info('Adding {filename} to db.'.format(filename=catalog_file))
         catalog_data = parse_catalog(catalog_file)
 
@@ -203,16 +163,11 @@ def make_gaia_db(db_address, catalogs):
                                                  'g_flux_error': row['phot_g_mean_flux_error']}
                                                 for row in catalog_data[chunk: chunk + 100000]])
             session.commit()
+    session.execute('insert into positions (id ramin ramax decmin decmax) select id, ra, ra, dec, dec from sources')
     session.close()
-    ra_index = Index('ra_index', Star.ra)
-    engine = create_engine(db_address, poolclass=pool.NullPool)
-    Base.metadata.bind = engine
-    ra_index.create(bind=engine)
-    dec_index = Index('dec_index', Star.dec)
-    dec_index.create(bind=engine)
 
 
-def make_gaia_healpix_catalogs(healpixels, catalogs, ncpu=6):
+def make_gaia_healpix_catalogs(healpixels, db_address='sqlite:////gaia.db'):
     catalog_names = []
     # For each heal pix
     for healpixel in healpixels:
@@ -221,41 +176,68 @@ def make_gaia_healpix_catalogs(healpixels, catalogs, ncpu=6):
             catalog_names.append(get_healpix_catalog_name(healpix_id=healpixel['index'],
                                                           nside=healpixel['nside'], allsky=False))
         else:
-            # For each catalog fits file get the sources in this heal pixel
-            # (Use multiple processes for this)
-            p = mp.Pool(ncpu)
-            sources_parameters = [(filename, healpixel) for filename in catalogs]
-            stars_in_healpixel = p.map(get_sources_in_healpixel, sources_parameters)
-            p.close()
-            stars_in_healpixel = flatten_catalog_arrays(stars_in_healpixel)
+            # For each healpixel fits file get the sources in this heal pixel
+            stars_in_healpixel = get_sources_in_healpixel(healpixel, db_address)
 
             # Sort the healpix catalog descending by flux
-            sorted_indices = np.argsort(stars_in_healpixel['phot_g_mean_flux'])[::-1]
+            stars_in_healpixel.sort('g_flux').reverse()
             # Write out the healpix catalog to a fits file
-            catalog_names.append(write_out_healpix_catalog(stars_in_healpixel[sorted_indices],
-                                                           healpixel['index'], healpixel['nside']))
+            catalog_names.append(write_out_healpix_catalog(stars_in_healpixel, healpixel['index'], healpixel['nside']))
 
     return catalog_names
 
 
 def parse_catalog(filename):
-    catalog_data = np.array(fits.getdata(filename, 1))
+    with gzip.open(filename, 'r') as csv_file:
+        csv_data = csv_file.read()
+    catalog_data = ascii.read(csv_data, 'fast_csv')
     return catalog_data
 
 
-def get_sources_in_healpixel(args):
-    filename, healpixel = args
-
-    logger.info('Getting sources in healpixel: {hp_id} from file: {filename}'.format(hp_id=healpixel['index'],
-                                                                                     filename=filename))
-    # Open the file
-    catalog_data = parse_catalog(filename)
-    offsets = great_circle_distance(catalog_data['ra'], catalog_data['dec'], healpixel['ra'], healpixel['dec'])
-    # Return the sources within the distance threshold
-    # We could also now run the catalog through hpsplit and only take the largest catalog
-    sources_in_healpix = catalog_data[offsets <= healpixel['radius']].copy()
-    del catalog_data
+def query_sources(db_address, ramin, ramax, decmin, decmax):
+    db_session = get_session(db_address)
+    sources_in_healpix = db_session.query(Position, Star).filter(Position.ramin >= ramin).filter(Position.ramax <= ramax)
+    sources_in_healpix = sources_in_healpix.filter(Position.decmin >= decmin).filter(Position.decmax <= decmax)
+    sources_in_healpix = sources_in_healpix.all()
+    db_session.close()
     return sources_in_healpix
+
+
+def get_sources_in_healpixel(healpixel, db_address):
+
+    logger.info('Getting sources in healpixel: {hp_id} from file: {filename}'.format(hp_id=healpixel['index']))
+    # Open the file
+
+    decmin = healpixel['dec'] - healpixel['radius']
+    decmax = healpixel['dec'] + healpixel['radius']
+    # See http://janmatuschek.de/LatitudeLongitudeBoundingCoordinates#RefBronstein
+    delta_ra = np.rad2deg(np.arcsin(np.sin(np.deg2rad(healpixel['radius'])) / np.cos(np.deg2rad(healpixel['dec']))))
+    ramin = healpixel['ra'] - delta_ra
+    ramax = healpixel['ra'] + delta_ra
+
+    # If one of the poles is included, just do all sources in the polar cap
+    if decmin < -90.0 or decmax > 90.0:
+        ramin = 0.0
+        ramax = 360.0
+        sources_in_healpix = query_sources(db_address, ramin, ramax, decmin, decmax)
+    elif ramin < 0.0:
+        sources_in_healpix = query_sources(db_address, ramin, ramax, decmin, decmax)
+        ramin = 360.0 - delta_ra
+        ramax = 360.0
+        sources_in_healpix += query_sources(db_address, ramin, ramax, decmin, decmax)
+    elif ramax > 360.0:
+        sources_in_healpix = query_sources(db_address, ramin, ramax, decmin, decmax)
+        ramin = 0.0
+        ramax = delta_ra
+        sources_in_healpix += query_sources(db_address, ramin, ramax, decmin, decmax)
+    else:
+        sources_in_healpix = query_sources(db_address, ramin, ramax, decmin, decmax)
+
+    # Return the sources within the distance threshold
+    source_catalog = {'flux': [source.g_flux for source, position in sources_in_healpix],
+                      'ra': [source.ra for source, position in sources_in_healpix],
+                      'dec': [source.dec for source, position in sources_in_healpix]}
+    return source_catalog
 
 
 def make_all_sky_catalog(catalog_names, n_sources_per_catalog):
@@ -318,7 +300,7 @@ def make_all_sky_index_files(catalog, scale):
     index_name = 'gaia-index-{scale}.fits'.format(scale=scale_filename_str)
     if not os.path.exists(index_name):
         os.system('build-astrometry-index -i {catalog} -o {index_name} -P {scale} '
-                  '-A ra -D dec -I {unique_id} -j 0.1 &> {log_name}'
+                  '-A ra -D dec -I {unique_id} -j 0.1 -M &> {log_name}'
                   ''.format(catalog=catalog, index_name=index_name,
                             scale=scale, unique_id=make_unique_id(scale),
                             log_name=index_name.replace('.fits', '.log')))
@@ -353,19 +335,6 @@ def make_single_index_file(args):
 
 def scale_to_filename_string(scale):
     return '{0:+d}'.format(scale).replace('+', 'p').replace('-', 'm')
-
-
-def flatten_catalog_arrays(list_of_catalogs):
-    # Find the total number of stars in the catalog
-    n_total_sources = np.sum([len(catalog) for catalog in list_of_catalogs])
-    # Create an array of corresponding size
-    merged_catalog = np.zeros(n_total_sources, dtype=list_of_catalogs[0].dtype)
-    # copy the results from each individual array to the new array
-    counter = 0
-    for catalog in list_of_catalogs:
-        merged_catalog[counter:counter + len(catalog)] = catalog
-        counter += len(catalog)
-    return merged_catalog
 
 
 def write_out_healpix_catalog(catalog, healpix_id=0, nside=0, allsky=False):
@@ -423,7 +392,3 @@ def plot_source_density():
         source_density += np.histogram2d(xs, ys, bins=(1000, 1000),
                                          range=[[0.0, 2.0 * np.pi], [-np.pi / 2.0, np.pi / 2.0]])[0]
     return source_density
-
-
-if __name__ == "__main__":
-    run()
