@@ -38,9 +38,9 @@ def create_index_files(catalog_directory='/net/fsfs.lco.gtn/data/AstroCatalogs/G
     # First let's make the data a little more useable by putting the catalog into an sqlite db.
     initial_catalogs = glob(os.path.join(catalog_directory, '*.csv.gz'))
 
-    if os.path.getsize('gaia.db') < 1e6:
+    if not os.path.exists('gaia.db') or os.path.getsize('gaia.db') < 1e6:
         # Now we can make a database of catalog. This is going to be one heck of a db.
-        make_gaia_db('sqlite:///gaia.db', initial_catalogs)
+        make_gaia_db(initial_catalogs)
 
     healpixels = nside_to_healpixels(16)
     healpix_catalogs = make_gaia_healpix_catalogs(healpixels, db_address='sqlite:///gaia.db', ncpu=6)
