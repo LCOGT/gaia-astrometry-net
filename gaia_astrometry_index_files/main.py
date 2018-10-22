@@ -13,6 +13,7 @@ import sys
 import gzip
 from astropy.io import ascii
 from astrometry.util.util import *
+import sqlite3
 
 Base = declarative_base()
 
@@ -142,29 +143,37 @@ def create_db(db_address):
     Base.metadata.create_all(engine)
 
 
-def make_gaia_db(db_address, catalogs):
-    """CREATE TABLE sources (id INTEGER NOT NULL, ra FLOAT, dec FLOAT, ra_error FLOAT, dec_error FLOAT,
-    g_flux FLOAT, g_flux_error FLOAT, PRIMARY KEY (id));
-    CREATE VIRTUAL TABLE positions using rtree(id, ramin, ramax, decmin, decmax);
-    """
-    #create_db(db_address)
-    session = get_session(db_address)
+def parse_row(line):
+    values = line.split(',')
+    return values[5], values[6], values[7], values[8], values[47], values[48]
+
+
+def make_gaia_db(catalogs):
+    connection = sqlite3.connect('gaia.db')
+    cursor = connection.cursor()
+    cursor.execute('PRAGMA LOCKING_MODE=EXCLUSIVE;')
+    cursor.execute('PRAGMA SYNCHRONOUS=OFF;')
+    cursor.execute('PRAGMA journal_mode=memory;')
+    cursor.execute("PRAGMA count_changes=OFF;")
+    cursor.execute('PRAGMA TEMP_STORE=memory;')
+    cursor.execute('PRAGMA auto_vacuum = 0;')
+    cursor.execute('PRAGMA foreign_keys=OFF;')
+    cursor.execute('begin transaction')
+    cursor.execute('CREATE TABLE IF NOT EXISTS sources (id INTEGER NOT NULL PRIMARY KEY, ra FLOAT, dec FLOAT, ra_error FLOAT, dec_error FLOAT, g_flux FLOAT, g_flux_error FLOAT);')
+    cursor.execute('COMMIT')
     for catalog_file in catalogs:
-
         logger.info('Adding {filename} to db.'.format(filename=catalog_file))
-        catalog_data = parse_catalog(catalog_file)
-
-        for chunk in range(0, len(catalog_data), 100000):
-            logger.info('Adding records starting at {chunk} for {filename}'.format(filename=catalog_file, chunk=chunk))
-            session.bulk_insert_mappings(Star, [{'ra': row['ra'], 'dec': row['dec'],
-                                                 'ra_error': row['ra_error'],
-                                                 'dec_error': row['dec_error'],
-                                                 'g_flux': row['phot_g_mean_flux'],
-                                                 'g_flux_error': row['phot_g_mean_flux_error']}
-                                                for row in catalog_data[chunk: chunk + 100000]])
-            session.commit()
-    session.execute('insert into positions (id ramin ramax decmin decmax) select id, ra, ra, dec, dec from sources')
-    session.close()
+        cursor.execute('begin transaction')
+        with gzip.open(catalog_file, 'rt') as csv_file:
+            columns = csv_file.readline()
+            logger.info('Making rows variable')
+            rows = [parse_row(line) for line in csv_file]
+        logger.info('Adding records to db')
+        cursor.executemany('INSERT INTO sources (ra, ra_error, dec, dec_error, g_flux, g_flux_error) values(?, ?, ?, ?, ?, ?)', rows)
+        cursor.execute('COMMIT')
+    cursor.execute('CREATE VIRTUAL TABLE if not exists positions using rtree(id, ramin, ramax, decmin, decmax);')
+    cursor.execute('insert into positions (id, ramin, ramax, decmin, decmax) select id, ra, ra, dec, dec from sources;')
+    cursor.close()
 
 
 def make_gaia_healpix_catalogs(healpixels, db_address='sqlite:////gaia.db'):
