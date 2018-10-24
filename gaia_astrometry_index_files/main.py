@@ -178,7 +178,7 @@ def make_gaia_db(catalogs):
 
 # For each heal pix
 def make_individual_healpix_catalog(healpixel):
-    db_address = 'sqlite:////gaia.db'
+    db_address = 'sqlite:///gaia.db'
     if os.path.exists(get_healpix_catalog_name(healpix_id=healpixel['index'],
                                                nside=healpixel['nside'], allsky=False)):
         return get_healpix_catalog_name(healpix_id=healpixel['index'],
