@@ -14,6 +14,7 @@ import gzip
 from astropy.io import ascii
 from astrometry.util.util import *
 import sqlite3
+from astropy.table import Table
 
 Base = declarative_base()
 
@@ -186,14 +187,15 @@ def make_individual_healpix_catalog(healpixel):
     else:
         # For each healpixel fits file get the sources in this heal pixel
         stars_in_healpixel = get_sources_in_healpixel(healpixel, db_address)
-
+        stars_in_healpixel = Table(stars_in_healpixel)
         # Sort the healpix catalog descending by flux
-        stars_in_healpixel.sort('g_flux').reverse()
+        stars_in_healpixel.sort('flux')
+        stars_in_healpixel.reverse()
         # Write out the healpix catalog to a fits file
         return write_out_healpix_catalog(stars_in_healpixel, healpixel['index'], healpixel['nside'])
 
 
-def make_gaia_healpix_catalogs(healpixels, db_address='sqlite:////gaia.db', ncpu=6):
+def make_gaia_healpix_catalogs(healpixels, db_address='sqlite:///gaia.db', ncpu=6):
     p = mp.Pool(ncpu)
     catalog_names = p.map(make_individual_healpix_catalog, healpixels)
     p.close()
@@ -208,11 +210,21 @@ def parse_catalog(filename):
 
 
 def query_sources(db_address, ramin, ramax, decmin, decmax):
-    db_session = get_session(db_address)
-    sources_in_healpix = db_session.query(Position, Star).filter(Position.ramin >= ramin).filter(Position.ramax <= ramax)
-    sources_in_healpix = sources_in_healpix.filter(Position.decmin >= decmin).filter(Position.decmax <= decmax)
-    sources_in_healpix = sources_in_healpix.all()
-    db_session.close()
+    connection = sqlite3.connect('gaia.db')
+    cursor = connection.cursor()
+    sql_command = 'select sources.g_flux, sources.ra, sources.dec from sources, positions ' \
+                  'where positions.ramin >= {ramin} and positions.ramax <= {ramax} ' \
+                  'and positions.decmin >= {decmin} and positions.decmax <= {decmax} ' \
+                  'and positions.id = sources.id'
+    sql_command = sql_command.format(ramin=ramin, ramax=ramax, decmin=decmin, decmax=decmax)
+    cursor.execute(sql_command)
+    rows = cursor.fetchall()
+    connection.close()
+    sources_in_healpix = {'flux': [], 'ra': [], 'dec':[]}
+    for row in rows:
+        sources_in_healpix['flux'].append(row[0])
+        sources_in_healpix['ra'].append(row[1])
+        sources_in_healpix['dec'].append(row[2])
     return sources_in_healpix
 
 
@@ -237,20 +249,22 @@ def get_sources_in_healpixel(healpixel, db_address):
         sources_in_healpix = query_sources(db_address, ramin, ramax, decmin, decmax)
         ramin = 360.0 - delta_ra
         ramax = 360.0
-        sources_in_healpix += query_sources(db_address, ramin, ramax, decmin, decmax)
+        sources_from_wrap = query_sources(db_address, ramin, ramax, decmin, decmax)
+        for key in sources_in_healpix:
+            sources_in_healpix[key] += sources_from_wrap[key]
+
     elif ramax > 360.0:
         sources_in_healpix = query_sources(db_address, ramin, ramax, decmin, decmax)
         ramin = 0.0
         ramax = delta_ra
-        sources_in_healpix += query_sources(db_address, ramin, ramax, decmin, decmax)
+        sources_from_wrap = query_sources(db_address, ramin, ramax, decmin, decmax)
+        for key in sources_in_healpix:
+            sources_in_healpix[key] += sources_from_wrap[key]
+
     else:
         sources_in_healpix = query_sources(db_address, ramin, ramax, decmin, decmax)
 
-    # Return the sources within the distance threshold
-    source_catalog = {'flux': [source.g_flux for source, position in sources_in_healpix],
-                      'ra': [source.ra for source, position in sources_in_healpix],
-                      'dec': [source.dec for source, position in sources_in_healpix]}
-    return source_catalog
+    return sources_in_healpix
 
 
 def make_all_sky_catalog(catalog_names, n_sources_per_catalog):
@@ -353,7 +367,7 @@ def scale_to_filename_string(scale):
 def write_out_healpix_catalog(catalog, healpix_id=0, nside=0, allsky=False):
     table_hdu = fits.BinTableHDU(catalog)
     catalog_name = get_healpix_catalog_name(healpix_id=healpix_id, nside=nside, allsky=allsky)
-    table_hdu.writeto(catalog_name, clobber=True)
+    table_hdu.writeto(catalog_name, overwrite=True)
     return catalog_name
 
 
