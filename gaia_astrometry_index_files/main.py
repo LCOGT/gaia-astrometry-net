@@ -176,27 +176,27 @@ def make_gaia_db(catalogs):
     cursor.close()
 
 
+# For each heal pix
+def make_individual_healpix_catalog(healpixel):
+    db_address = 'sqlite:////gaia.db'
+    if os.path.exists(get_healpix_catalog_name(healpix_id=healpixel['index'],
+                                               nside=healpixel['nside'], allsky=False)):
+        return get_healpix_catalog_name(healpix_id=healpixel['index'],
+                                        nside=healpixel['nside'], allsky=False)
+    else:
+        # For each healpixel fits file get the sources in this heal pixel
+        stars_in_healpixel = get_sources_in_healpixel(healpixel, db_address)
+
+        # Sort the healpix catalog descending by flux
+        stars_in_healpixel.sort('g_flux').reverse()
+        # Write out the healpix catalog to a fits file
+        return write_out_healpix_catalog(stars_in_healpixel, healpixel['index'], healpixel['nside'])
+
+
 def make_gaia_healpix_catalogs(healpixels, db_address='sqlite:////gaia.db', ncpu=6):
-    catalog_names = []
-    # For each heal pix
-    def make_individual_healpix_catalog(healpixel):
-        if os.path.exists(get_healpix_catalog_name(healpix_id=healpixel['index'],
-                                                   nside=healpixel['nside'], allsky=False)):
-            catalog_names.append(get_healpix_catalog_name(healpix_id=healpixel['index'],
-                                                          nside=healpixel['nside'], allsky=False))
-        else:
-            # For each healpixel fits file get the sources in this heal pixel
-            stars_in_healpixel = get_sources_in_healpixel(healpixel, db_address)
-
-            # Sort the healpix catalog descending by flux
-            stars_in_healpixel.sort('g_flux').reverse()
-            # Write out the healpix catalog to a fits file
-            catalog_names.append(write_out_healpix_catalog(stars_in_healpixel, healpixel['index'], healpixel['nside']))
     p = mp.Pool(ncpu)
-    p.map(make_individual_healpix_catalog, healpixels)
+    catalog_names = p.map(make_individual_healpix_catalog, healpixels)
     p.close()
-
-
     return catalog_names
 
 
