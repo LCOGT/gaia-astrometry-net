@@ -176,10 +176,10 @@ def make_gaia_db(catalogs):
     cursor.close()
 
 
-def make_gaia_healpix_catalogs(healpixels, db_address='sqlite:////gaia.db'):
+def make_gaia_healpix_catalogs(healpixels, db_address='sqlite:////gaia.db', ncpu=6):
     catalog_names = []
     # For each heal pix
-    for healpixel in healpixels:
+    def make_individual_healpix_catalog(healpixel):
         if os.path.exists(get_healpix_catalog_name(healpix_id=healpixel['index'],
                                                    nside=healpixel['nside'], allsky=False)):
             catalog_names.append(get_healpix_catalog_name(healpix_id=healpixel['index'],
@@ -192,6 +192,10 @@ def make_gaia_healpix_catalogs(healpixels, db_address='sqlite:////gaia.db'):
             stars_in_healpixel.sort('g_flux').reverse()
             # Write out the healpix catalog to a fits file
             catalog_names.append(write_out_healpix_catalog(stars_in_healpixel, healpixel['index'], healpixel['nside']))
+    p = mp.Pool(ncpu)
+    p.map(make_individual_healpix_catalog, healpixels)
+    p.close()
+
 
     return catalog_names
 
