@@ -67,11 +67,11 @@ def save_catalog(catalog, counter):
 
 
 def nside_to_healpixels(nside):
-    healpixel_indexes = np.arange(12 * nside**2)
+    healpixel_indexes = np.arange(12 * nside**2, dtype=int)
 
     # Get the pixel positions of each healpix
-    healpix_ras = [healpix_to_radec(i, nside, 0.5, 0.5)[0] * 180.0 / np.pi for i in healpixel_indexes]
-    healpix_decs = [healpix_to_radec(i, nside, 0.5, 0.5)[1] * 180.0 / np.pi for i in healpixel_indexes]
+    healpix_ras = [healpix_to_radec(int(i), nside, 0.5, 0.5)[0] * 180.0 / np.pi for i in healpixel_indexes]
+    healpix_decs = [healpix_to_radec(int(i), nside, 0.5, 0.5)[1] * 180.0 / np.pi for i in healpixel_indexes]
 
     # Get the radias+1 degree overlap for nside=2
     ras_along_center_ring = [healpix_ras[i] for i in healpixel_indexes if healpix_decs[i] == 0.0]
