@@ -218,7 +218,7 @@ def query_sources(db_address, ramin, ramax, decmin, decmax):
 
 def get_sources_in_healpixel(healpixel, db_address):
 
-    logger.info('Getting sources in healpixel: {hp_id} from file: {filename}'.format(hp_id=healpixel['index']))
+    logger.info('Getting sources in healpixel: {hp_id}'.format(hp_id=healpixel['index']))
     # Open the file
 
     decmin = healpixel['dec'] - healpixel['radius']
