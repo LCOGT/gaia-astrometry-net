@@ -1,9 +1,5 @@
 from glob import glob
 from astropy.io import fits
-from sqlalchemy import create_engine, pool
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy import Column, Integer, Float
-from sqlalchemy.ext.declarative import declarative_base
 import os
 import logging
 import multiprocessing as mp
@@ -16,7 +12,8 @@ from astrometry.util.util import *
 import sqlite3
 from astropy.table import Table
 
-Base = declarative_base()
+from gaia_astrometry_index_files.dbs import make_gaia_db
+from gaia_astrometry_index_files.utils import nside_to_healpixels, great_circle_distance
 
 logger = logging.getLogger('GaiaCatalogs')
 logger.setLevel(logging.DEBUG)
@@ -57,7 +54,19 @@ def create_index_files(catalog_directory='/net/fsfs.lco.gtn/data/AstroCatalogs/G
     for scale in index_scales:
         make_individual_index_files(healpix_catalogs, scale, ncpu=6)
 
+    save_index_file_meta_data('gaia-dr2-index-files.dat', healpixels, range(-3, 7), 16)
     # New index files! Woot!
+
+
+def save_index_file_meta_data(meta_data_file_name, healpixels, scales, nside):
+    meta_data = {'filename': [], 'ra': [], 'dec': [], 'radius': []}
+    for healpixel in healpixels:
+        for scale in scales:
+            meta_data['filename'].append(make_index_file_name(nside, scale, healpixel['id']))
+            meta_data['ra'].append(healpixel['ra'])
+            meta_data['dec'].append(healpixel['dec'])
+            meta_data['radius'].append(healpixel['radius'])
+    Table(meta_data).write(meta_data_file_name, format='ascii')
 
 
 def save_catalog(catalog, counter):
@@ -65,116 +74,6 @@ def save_catalog(catalog, counter):
     output_name = 'gaia-fullcatalog-{counter}.fits'.format(counter=counter)
     hdu.writeto(output_name, clobber=True)
     return output_name
-
-
-def nside_to_healpixels(nside):
-    healpixel_indexes = np.arange(12 * nside**2, dtype=int)
-
-    # Get the pixel positions of each healpix
-    healpix_ras = [healpix_to_radec(int(i), nside, 0.5, 0.5)[0] * 180.0 / np.pi for i in healpixel_indexes]
-    healpix_decs = [healpix_to_radec(int(i), nside, 0.5, 0.5)[1] * 180.0 / np.pi for i in healpixel_indexes]
-
-    # Get the radias+1 degree overlap for nside=2
-    ras_along_center_ring = [healpix_ras[i] for i in healpixel_indexes if healpix_decs[i] == 0.0]
-
-    healpix_radius = np.abs(ras_along_center_ring[0] - ras_along_center_ring[1]) / 2.0
-    return [{'index': i, 'ra': healpix_ras[i], 'dec': healpix_decs[i],
-             'radius': healpix_radius, 'nside': nside} for i in healpixel_indexes]
-
-
-class Star(Base):
-    __tablename__ = 'sources'
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    ra = Column(Float) #, index=True
-    dec = Column(Float) # , index=True
-    ra_error = Column(Float)
-    dec_error = Column(Float)
-    g_flux = Column(Float)
-    g_flux_error = Column(Float)
-
-
-class Position(Base):
-    __tablename__ = 'positions'
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    ramin = Column(Float)
-    ramax = Column(Float)
-    decmin = Column(Float)
-    decmax = Column(Float)
-
-
-def great_circle_distance(ra1, dec1, ra2, dec2):
-    ra1_rad, dec1_rad = np.deg2rad([ra1, dec1])
-    ra2_rad, dec2_rad = np.deg2rad([ra2, dec2])
-    distance_rad = np.arccos(np.sin(dec1_rad) * np.sin(dec2_rad) + np.cos(dec1_rad) * np.cos(dec2_rad) * np.cos(ra2_rad - ra1_rad))
-    return np.rad2deg(distance_rad)
-
-
-def test_great_circle_distance():
-    np.testing.assert_allclose(great_circle_distance(0, 0, 100, 0), 100.0, atol=1e-5)
-    np.testing.assert_allclose(great_circle_distance(0, 0, 181, 0), 179.0, atol=1e-5)
-    np.testing.assert_allclose(great_circle_distance(0, 0, 0, 10), 10, atol=1e-5)
-    np.testing.assert_allclose(great_circle_distance(0, 75, 180, 75), 30.0, atol=1e-5)
-
-
-def get_session(db_address):
-    """
-    Get a connection to the database.
-
-    Returns
-    -------
-    session: SQLAlchemy Database Session
-    """
-    # Build a new engine for each session. This makes things thread safe.
-    engine = create_engine(db_address, poolclass=pool.NullPool)
-    Base.metadata.bind = engine
-
-    # We don't use autoflush typically. I have run into issues where SQLAlchemy would try to flush
-    # incomplete records causing a crash. None of the queries here are large, so it should be ok.
-    db_session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
-    session = db_session()
-    return session
-
-
-def create_db(db_address):
-    # Create an engine for the database
-    engine = create_engine(db_address)
-
-    # Create all tables in the engine
-    # This only needs to be run once on initialization.
-    Base.metadata.create_all(engine)
-
-
-def parse_row(line):
-    values = line.split(',')
-    return values[5], values[6], values[7], values[8], values[47], values[48]
-
-
-def make_gaia_db(catalogs):
-    connection = sqlite3.connect('gaia.db')
-    cursor = connection.cursor()
-    cursor.execute('PRAGMA LOCKING_MODE=EXCLUSIVE;')
-    cursor.execute('PRAGMA SYNCHRONOUS=OFF;')
-    cursor.execute('PRAGMA journal_mode=memory;')
-    cursor.execute("PRAGMA count_changes=OFF;")
-    cursor.execute('PRAGMA TEMP_STORE=memory;')
-    cursor.execute('PRAGMA auto_vacuum = 0;')
-    cursor.execute('PRAGMA foreign_keys=OFF;')
-    cursor.execute('begin transaction')
-    cursor.execute('CREATE TABLE IF NOT EXISTS sources (id INTEGER NOT NULL PRIMARY KEY, ra FLOAT, dec FLOAT, ra_error FLOAT, dec_error FLOAT, g_flux FLOAT, g_flux_error FLOAT);')
-    cursor.execute('COMMIT')
-    for catalog_file in catalogs:
-        logger.info('Adding {filename} to db.'.format(filename=catalog_file))
-        cursor.execute('begin transaction')
-        with gzip.open(catalog_file, 'rt') as csv_file:
-            columns = csv_file.readline()
-            logger.info('Making rows variable')
-            rows = [parse_row(line) for line in csv_file]
-        logger.info('Adding records to db')
-        cursor.executemany('INSERT INTO sources (ra, ra_error, dec, dec_error, g_flux, g_flux_error) values(?, ?, ?, ?, ?, ?)', rows)
-        cursor.execute('COMMIT')
-    cursor.execute('CREATE VIRTUAL TABLE if not exists positions using rtree(id, ramin, ramax, decmin, decmax);')
-    cursor.execute('insert into positions (id, ramin, ramax, decmin, decmax) select id, ra, ra, dec, dec from sources;')
-    cursor.close()
 
 
 # For each heal pix
@@ -311,7 +210,7 @@ def remove_duplicate_sources(catalog, n_healpix):
             # We only need to check for the number of healpixels because that
             # will be the maximum number of duplicates
             # otherwise the computation gets out of hand
-            offsets = great_circle_distance(catalog[i+1:i+n_healpix]['ra'],
+            offsets = great_circle_distance(catalog[i + 1:i + n_healpix]['ra'],
                                             catalog[i+1:i+n_healpix]['dec'],
                                             source['ra'], source['dec'])
             is_duplicate[i+1:i+n_healpix] = offsets < 1e-6
@@ -339,16 +238,18 @@ def make_individual_index_files(catalogs, scale, margin=1, ncpu=6):
     p.close()
 
 
+def make_index_file_name(nside, scale, healpixel_id):
+    return 'gaia-index-{scale}-{nside}-{hp_id}.fits'.format(nside=nside, hp_id=healpixel_id,
+                                                            scale=scale_to_filename_string(scale))
+
+
 def make_single_index_file(args):
     catalog, scale, margin = args
     nside, healpix_id = catalog[:-5].split('-')[2:4]
-    scale_name_str = scale_to_filename_string(scale)
     logger.info('Making index file. nside: {nside}, healpix: {hp_id}, scale: {scale} '.format(nside=nside,
                                                                                               hp_id=healpix_id,
                                                                                               scale=scale))
-    index_name = 'gaia-index-{scale}-{nside}-{hp_id}.fits'.format(nside=nside,
-                                                                  hp_id=healpix_id,
-                                                                  scale=scale_name_str)
+    index_name = make_index_file_name(nside, scale, healpix_id)
 
     if not os.path.exists(index_name):
         # For the smaller indexes run the astrometry.net index maker on the healpix files

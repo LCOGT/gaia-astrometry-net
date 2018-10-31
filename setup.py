@@ -20,4 +20,5 @@ setup(name='gaia-astrometry-net',
       package_dir={'gaia_astrometry_index_files': 'gaia_astrometry_index_files'},
       include_package_data=True,
       install_requires=['numpy', 'sqlalchemy', 'astrometry', 'astropy', 'lcogt_logging'],
-      entry_points={'console_scripts': ['create_gaia_index_files=gaia_astrometry_index_files.main:create_index_files']})
+      entry_points={'console_scripts': ['create_gaia_index_files=gaia_astrometry_index_files.main:create_index_files',
+                                        'solve-astrometry-gaia=gaia_astrometry_index_files.solve:solve_frame']})
