@@ -40,13 +40,15 @@ def save_config(filename, index_files, index_file_path):
 
 def solve_frame():
     parser = argparse.ArgumentParser(description='Run astrometry.net on an LCO fits file using the GAIA DR2 Index files')
-    parser.add_argument('--ra', default=None)
-    parser.add_argument('--dec', default=None)
-    parser.add_argument('--radius', default=2.0)
-    parser.add_argument('--index-file-path', dest='index_file_path')
-    parser.add_argument('--filename')
+    parser.add_argument('--ra', default=None,
+                        help='RA of the center to search. Default is None which will then get a first guess from the header')
+    parser.add_argument('--dec', default=None,
+                        help='Dec of the center to search. Default is None which will then get a first guess from the header')
+    parser.add_argument('--radius', default=2.0, help='radius of the search cone in degrees')
+    parser.add_argument('--index-file-path', dest='index_file_path', help='path to GAIA DR2 index files')
+    parser.add_argument('--filename', help='filename of the image to solve')
     args = parser.parse_args()
-    data, header = fits.getdata(args.filename)
+    data, header = fits.getdata(args.filename, header=True)
     if args.ra is None or args.dec is None:
         ra, dec = parse_ra_dec(header)
 
