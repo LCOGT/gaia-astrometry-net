@@ -62,7 +62,7 @@ def save_index_file_meta_data(meta_data_file_name, healpixels, scales, nside):
     meta_data = {'filename': [], 'ra': [], 'dec': [], 'radius': []}
     for healpixel in healpixels:
         for scale in scales:
-            meta_data['filename'].append(make_index_file_name(nside, scale, healpixel['id']))
+            meta_data['filename'].append(make_index_file_name(nside, scale, healpixel['index']))
             meta_data['ra'].append(healpixel['ra'])
             meta_data['dec'].append(healpixel['dec'])
             meta_data['radius'].append(healpixel['radius'])
