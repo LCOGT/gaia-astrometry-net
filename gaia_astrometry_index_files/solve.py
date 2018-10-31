@@ -31,7 +31,7 @@ def get_relevant_index_files(ra, dec, radius, index_file_path):
 
 
 def save_config(filename, index_files, index_file_path):
-    lines= ['inparallel\n', 'cpulimit 300\n', 'add_path {path}\n'.format(index_file_path)]
+    lines= ['inparallel\n', 'cpulimit 300\n', 'add_path {path}\n'.format(path=index_file_path)]
     for index_file in index_files:
         lines.append('index {index}\n'.format(index=index_file))
     with open(filename, 'w') as f:
