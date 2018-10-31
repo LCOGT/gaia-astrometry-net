@@ -67,7 +67,7 @@ def solve_frame():
     catalog_name = os.path.join(os.getcwd(), basename.replace('.fits', '.cat.fits'))
     try:
         catalog = make_catalog(data, header)
-        catalog[:40].write(catalog_name)
+        catalog[:40].write(catalog_name, overwrite=True)
     except:
         logger.error('Could not produce source catalog')
         return
@@ -81,7 +81,7 @@ def solve_frame():
     command = ASTROMETRY_NET_COMMAND.format(ra=ra, dec=dec, scale_low=0.9 * pixel_scale, radius=args.radius,
                                             scale_high=1.1 * pixel_scale, wcs_name=wcs_name,
                                             catalog_name=catalog_name, nx=data.shape[1], ny=data.shape[0],
-                                            config_name=config_file_name, catalog_source_name=catalog_source_name)
+                                            config_name=config_file_name, catalog_source_file=catalog_source_name)
 
     try:
         console_output = subprocess.check_output(shlex.split(command))
