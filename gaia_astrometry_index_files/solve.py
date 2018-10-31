@@ -103,7 +103,7 @@ def solve_frame():
     # Add the RA and Dec values to the catalog
     add_ra_dec_to_catalog(header, catalog)
 
-    save_solved_image(basename.replace('.fits', 'solved.fits'), header, data, catalog)
+    save_solved_image(basename.replace('.fits', '.solved.fits'), header, data, catalog)
     save_astrometry_catalog_regions(basename.replace('.fits', '.gaia.reg'), catalog_source_name)
 
 
