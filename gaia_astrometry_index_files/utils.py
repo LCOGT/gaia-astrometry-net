@@ -1,4 +1,3 @@
-import numpy
 import numpy as np
 from astrometry.util.util import healpix_to_radec
 
