@@ -1,9 +1,9 @@
-import gzip
 import sqlite3
 from sqlalchemy import Column, Integer, Float, create_engine, pool
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import logging
+from gaia_astrometry_index_files.csv import parse_csv
 
 logger = logging.getLogger(__name__)
 
@@ -13,8 +13,8 @@ Base = declarative_base()
 class Star(Base):
     __tablename__ = 'sources'
     id = Column(Integer, primary_key=True, autoincrement=True)
-    ra = Column(Float) #, index=True
-    dec = Column(Float) # , index=True
+    ra = Column(Float)
+    dec = Column(Float)
     ra_error = Column(Float)
     dec_error = Column(Float)
     g_flux = Column(Float)
@@ -74,18 +74,10 @@ def make_gaia_db(catalogs):
     for catalog_file in catalogs:
         logger.info('Adding {filename} to db.'.format(filename=catalog_file))
         cursor.execute('begin transaction')
-        with gzip.open(catalog_file, 'rt') as csv_file:
-            columns = csv_file.readline()
-            logger.info('Making rows variable')
-            rows = [parse_row(line) for line in csv_file]
+        rows = parse_csv(catalog_file)
         logger.info('Adding records to db')
         cursor.executemany('INSERT INTO sources (ra, ra_error, dec, dec_error, g_flux, g_flux_error) values(?, ?, ?, ?, ?, ?)', rows)
         cursor.execute('COMMIT')
     cursor.execute('CREATE VIRTUAL TABLE if not exists positions using rtree(id, ramin, ramax, decmin, decmax);')
     cursor.execute('insert into positions (id, ramin, ramax, decmin, decmax) select id, ra, ra, dec, dec from sources;')
     cursor.close()
-
-
-def parse_row(line):
-    values = line.split(',')
-    return values[5], values[6], values[7], values[8], values[47], values[48]
