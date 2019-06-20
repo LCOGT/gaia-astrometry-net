@@ -64,4 +64,4 @@ search radius is 2 degrees but this can also be overridden by the user.
 
 ## Support
 [API documentation]()  
-[Create an issue](https://issues.lco.global/)
+[Create an issue](https://lcoglobal.redmineup.com/)
