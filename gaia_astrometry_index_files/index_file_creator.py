@@ -24,6 +24,17 @@ formatter = LCOGTFormatter()
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
+fovs = {'p6': 60.0,
+        'p5': 42.426406871192846,
+        'p4': 24.0,
+        'p3': 16.97056274847714,
+        'p2': 12.0,
+        'p1': 8.48528137423857,
+        'p0': 6.0,
+        'm1': 4.242640687119285,
+        'm2': 3.0,
+        'm3': 2.1213203435596424}
+
 
 def create_index_files(catalog_directory='/net/fsfs.lco.gtn/data/AstroCatalogs/GAIA-DR2/gaia_source/csv'):
     """
@@ -59,13 +70,14 @@ def create_index_files(catalog_directory='/net/fsfs.lco.gtn/data/AstroCatalogs/G
 
 
 def save_index_file_meta_data(meta_data_file_name, healpixels, scales, nside):
-    meta_data = {'filename': [], 'ra': [], 'dec': [], 'radius': []}
+    meta_data = {'filename': [], 'ra': [], 'dec': [], 'radius': [], 'fov': []}
     for healpixel in healpixels:
         for scale in scales:
             meta_data['filename'].append(make_index_file_name(nside, scale, healpixel['index']))
             meta_data['ra'].append(healpixel['ra'])
             meta_data['dec'].append(healpixel['dec'])
             meta_data['radius'].append(healpixel['radius'])
+            meta_data['fov'].append(fovs[scale_to_filename_string(scale)])
     Table(meta_data).write(meta_data_file_name, format='ascii')
 
 
