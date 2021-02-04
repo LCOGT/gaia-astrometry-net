@@ -24,7 +24,20 @@ formatter = LCOGTFormatter()
 handler.setFormatter(formatter)
 logger.addHandler(handler)
 
-fovs = {'p6': 60.0,
+fovs = {'p19': 5430.580079512685,
+        'p18': 3840.0,
+        'p17': 2715.2900397563426,
+        'p16': 1920.0,
+        'p15': 1357.645019878171,
+        'p14': 960.0,
+        'p13': 678.8225099390855,
+        'p12': 480.0,
+        'p11': 339.41125496954277,
+        'p10': 240.0,
+        'p9': 169.70562748477138,
+        'p8': 120.0,
+        'p7': 84.8528137423857,
+        'p6': 60.0,
         'p5': 42.426406871192846,
         'p4': 24.0,
         'p3': 16.97056274847714,
@@ -51,8 +64,23 @@ def create_index_files(catalog_directory='/net/fsfs.lco.gtn/data/AstroCatalogs/G
         # Now we can make a database of catalog. This is going to be one heck of a db.
         make_gaia_db(initial_catalogs)
 
-    healpixels = nside_to_healpixels(16)
-    healpix_catalogs = make_gaia_healpix_catalogs(healpixels, db_address='sqlite:///gaia.db', ncpu=6)
+    # Next make the large field index files
+    large_healpixels = nside_to_healpixels(4)
+    healpix_catalogs = make_gaia_healpix_catalogs(large_healpixels, db_address='sqlite:///gaia.db', ncpu=6)
+    index_scales = np.arange(7, 11)[::-1]
+    for scale in index_scales:
+        make_individual_index_files(healpix_catalogs, scale, ncpu=6)
+
+    # Make the all sky index files first
+    all_sky_catalog = make_all_sky_catalog(healpix_catalogs, 50000)
+    index_scales = np.arange(11, 20)[::-1]
+    for scale in index_scales:
+        make_all_sky_index_files(all_sky_catalog, scale)
+
+    all_sky_healpixels = [{'index': 0, 'ra': 0.0, 'dec': 0.0, 'radius': 360.0}]
+    # Make the small field index files
+    small_healpixels = nside_to_healpixels(16)
+    healpix_catalogs = make_gaia_healpix_catalogs(small_healpixels, db_address='sqlite:///gaia.db', ncpu=6)
 
     # Now we need to make index files down to scale=0
     # This is currently what is provided by the astrometry.net people and is
@@ -65,20 +93,23 @@ def create_index_files(catalog_directory='/net/fsfs.lco.gtn/data/AstroCatalogs/G
     for scale in index_scales:
         make_individual_index_files(healpix_catalogs, scale, ncpu=6)
 
-    save_index_file_meta_data('gaia-dr2-index-files.dat', healpixels, range(-3, 7), 16)
+    scales = range(-3, 20)
+    nsides = [16] * 10 + [4] * 4 + [0] * 9
+    healpixels = [small_healpixels] * 10 + [large_healpixels] + [all_sky_healpixels] * 9
+    save_index_file_meta_data('gaia-dr2-index-files.dat', healpixels, scales, nsides)
     # New index files! Woot!
 
 
-def save_index_file_meta_data(meta_data_file_name, healpixels, scales, nside):
+def save_index_file_meta_data(meta_data_file_name, healpixels, scales, nsides):
     meta_data = {'filename': [], 'ra': [], 'dec': [], 'radius': [], 'fov': []}
-    for healpixel in healpixels:
-        for scale in scales:
-            meta_data['filename'].append(make_index_file_name(nside, scale, healpixel['index']))
+    for i, scale in enumerate(scales):
+        for healpixel in healpixels[i]:
+            meta_data['filename'].append(make_index_file_name(scale, nside, healpixel['index'], allsky=nsides[i] == 0))
             meta_data['ra'].append(healpixel['ra'])
             meta_data['dec'].append(healpixel['dec'])
             meta_data['radius'].append(healpixel['radius'])
             meta_data['fov'].append(fovs[scale_to_filename_string(scale)])
-    Table(meta_data).write(meta_data_file_name, format='ascii')
+    Table(meta_data).write(meta_data_file_name, format='ascii', overwrite=True)
 
 
 def save_catalog(catalog, counter):
@@ -235,7 +266,7 @@ def make_all_sky_index_files(catalog, scale):
     # Run the index making program from astrometry.net on the all sky catalog
     logger.info('Making all sky index file for scale: {scale}'.format(scale=scale))
     scale_filename_str = scale_to_filename_string(scale)
-    index_name = 'gaia-index-{scale}.fits'.format(scale=scale_filename_str)
+    index_name = make_index_file_name(scale, allsky=True)
     if not os.path.exists(index_name):
         os.system('build-astrometry-index -i {catalog} -o {index_name} -P {scale} '
                   '-A ra -D dec -I {unique_id} -j 0.1 -M &> {log_name}'
@@ -250,9 +281,14 @@ def make_individual_index_files(catalogs, scale, margin=1, ncpu=6):
     p.close()
 
 
-def make_index_file_name(nside, scale, healpixel_id):
-    return 'gaia-index-{scale}-{nside}-{hp_id}.fits'.format(nside=nside, hp_id=healpixel_id,
-                                                            scale=scale_to_filename_string(scale))
+def make_index_file_name(scale, nside=0, healpixel_id=0, allsky=False):
+    scale_filename_str = scale_to_filename_string(scale)
+    if allsky:
+        filename = 'gaia-index-{scale}.fits'.format(scale=scale_filename_str)
+    else:
+        filename = 'gaia-index-{scale}-{nside}-{hp_id}.fits'.format(nside=nside, hp_id=healpixel_id,
+                                                                    scale=scale_filename_str)
+    return filename
 
 
 def make_single_index_file(args):
@@ -261,7 +297,7 @@ def make_single_index_file(args):
     logger.info('Making index file. nside: {nside}, healpix: {hp_id}, scale: {scale} '.format(nside=nside,
                                                                                               hp_id=healpix_id,
                                                                                               scale=scale))
-    index_name = make_index_file_name(nside, scale, healpix_id)
+    index_name = make_index_file_name(scale, nside, healpix_id)
 
     if not os.path.exists(index_name):
         # For the smaller indexes run the astrometry.net index maker on the healpix files
