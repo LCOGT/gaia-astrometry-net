@@ -11,6 +11,7 @@ from astropy.io import ascii
 from astrometry.util.util import *
 import sqlite3
 from astropy.table import Table
+import traceback
 
 from gaia_astrometry_index_files.dbs import make_gaia_db
 from gaia_astrometry_index_files.utils import nside_to_healpixels, great_circle_distance
@@ -104,7 +105,7 @@ def save_index_file_meta_data(meta_data_file_name, healpixels, scales, nsides):
     meta_data = {'filename': [], 'ra': [], 'dec': [], 'radius': [], 'fov': []}
     for i, scale in enumerate(scales):
         for healpixel in healpixels[i]:
-            meta_data['filename'].append(make_index_file_name(scale, nside, healpixel['index'], allsky=nsides[i] == 0))
+            meta_data['filename'].append(make_index_file_name(scale, nsides[i], healpixel['index'], allsky=nsides[i] == 0))
             meta_data['ra'].append(healpixel['ra'])
             meta_data['dec'].append(healpixel['dec'])
             meta_data['radius'].append(healpixel['radius'])
@@ -234,7 +235,7 @@ def make_all_sky_catalog(catalog_names, n_sources_per_catalog):
     allsky_catalog = remove_duplicate_sources(allsky_catalog, len(catalog_names))
     logger.info('Sorting all sky catalog')
     # Sort the all sky catalog by flux
-    sorted_indices = np.argsort(allsky_catalog['phot_g_mean_flux'])[::-1]
+    sorted_indices = np.argsort(allsky_catalog['flux'])[::-1]
     # Save the all sky catalog
     return write_out_healpix_catalog(allsky_catalog[sorted_indices], allsky=True)
 
@@ -292,21 +293,27 @@ def make_index_file_name(scale, nside=0, healpixel_id=0, allsky=False):
 
 
 def make_single_index_file(args):
-    catalog, scale, margin = args
-    nside, healpix_id = catalog[:-5].split('-')[2:4]
-    logger.info('Making index file. nside: {nside}, healpix: {hp_id}, scale: {scale} '.format(nside=nside,
-                                                                                              hp_id=healpix_id,
-                                                                                              scale=scale))
-    index_name = make_index_file_name(scale, nside, healpix_id)
+    try:
+        catalog, scale, margin = args
+        nside, healpix_id = catalog[:-5].split('-')[2:4]
+        logger.info('Making index file. nside: {nside}, healpix: {hp_id}, scale: {scale} '.format(nside=nside,
+                                                                                                  hp_id=healpix_id,
+                                                                                                  scale=scale))
+        index_name = make_index_file_name(scale, nside, healpix_id)
 
-    if not os.path.exists(index_name):
-        # For the smaller indexes run the astrometry.net index maker on the healpix files
-        os.system('build-astrometry-index -i {catalog} -o {index_name} -P {scale} '
-                  '-H {healpix_id} -s {nside} -m {margin} -A ra -D dec -I {unique_id} -j 0.1 '
-                  '&> {log_name}'.format(catalog=catalog, index_name=index_name, scale=scale,
-                                         margin=margin, nside=nside, healpix_id=healpix_id,
-                                         unique_id=make_unique_id(scale),
-                                         log_name=index_name.replace('.fits', '.log')))
+        if not os.path.exists(index_name):
+            # For the smaller indexes run the astrometry.net index maker on the healpix files
+            os.system('build-astrometry-index -i {catalog} -o {index_name} -P {scale} '
+                      '-H {healpix_id} -s {nside} -m {margin} -A ra -D dec -I {unique_id} -j 0.1 '
+                      '&> {log_name}'.format(catalog=catalog, index_name=index_name, scale=scale,
+                                             margin=margin, nside=nside, healpix_id=healpix_id,
+                                             unique_id=make_unique_id(scale),
+                                             log_name=index_name.replace('.fits', '.log')))
+    except:
+        exc_type, exc_value, exc_tb = sys.exc_info()
+        message = 'Making index file. nside: {nside}, healpix: {hp_id}, scale: {scale}. Traceback: {traceback}'
+        logger.error(message.format(nside=nside, hp_id=healpix_id, scale=scale,
+                                    traceback=traceback.format_exception(exc_type, exc_value, exc_tb)))
 
 
 def scale_to_filename_string(scale):
