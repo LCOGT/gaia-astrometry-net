@@ -96,7 +96,7 @@ def create_index_files(catalog_directory='/net/fsfs.lco.gtn/data/AstroCatalogs/G
 
     scales = range(-3, 20)
     nsides = [16] * 10 + [4] * 4 + [0] * 9
-    healpixels = [small_healpixels] * 10 + [large_healpixels] + [all_sky_healpixels] * 9
+    healpixels = [small_healpixels] * 10 + [large_healpixels] * 4 + [all_sky_healpixels] * 9
     save_index_file_meta_data('gaia-dr2-index-files.dat', healpixels, scales, nsides)
     # New index files! Woot!
 
